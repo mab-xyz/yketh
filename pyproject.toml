@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "yketh"
+version = "0.1.0"
+description = "Sign Ethereum transactions with a YubiKey's on-card secp256k1 OpenPGP key, with attestation proof of non-exportability"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+authors = [{ name = "Martin Monperrus" }]
+dependencies = [
+    "yubikey-manager>=5.7",
+    "cryptography>=42",
+    "eth-account>=0.13",
+    "eth-keys>=0.5",
+    "eth-utils>=4",
+    "pycryptodome>=3.20",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov", "mypy", "ruff"]
+
+[project.scripts]
+yketh = "yketh.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["yketh"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["hardware: needs a YubiKey plugged in (destructive: regenerates the OpenPGP SIG key)"]
+addopts = "-m 'not hardware'"
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
