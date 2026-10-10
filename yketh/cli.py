@@ -20,7 +20,16 @@ from ._card import CardError, open_card
 
 
 def _pin(env: str, prompt: str) -> str:
-    return os.environ.get(env) or getpass.getpass(prompt)
+    """PIN from $ENV, else from the file named by $ENV_FILE (must not be group/other
+    readable), else asked interactively."""
+    if pin := os.environ.get(env):
+        return pin
+    if path := os.environ.get(f"{env}_FILE"):
+        p = Path(path).expanduser()
+        if p.stat().st_mode & 0o077:
+            raise ValueError(f"{p} is accessible by group/others, chmod 600 it")
+        return p.read_text().strip()
+    return getpass.getpass(prompt)
 
 
 def _emit(args: argparse.Namespace, data: dict[str, Any], text: str) -> None:

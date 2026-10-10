@@ -50,7 +50,7 @@ yketh verify-attestation proof.pem --address 0x…   # offline, no card needed
 yketh touch on                               # require a physical touch per signature
 ```
 
-Every command accepts `--json` and `--serial`. PINs are read from `YKETH_PIN` / `YKETH_ADMIN_PIN`, or asked for interactively. The OpenPGP defaults are `123456` / `12345678`. Change them:
+Every command accepts `--json` and `--serial`. PINs are read from `YKETH_PIN` / `YKETH_ADMIN_PIN`, else from the file named by `YKETH_PIN_FILE` / `YKETH_ADMIN_PIN_FILE` (must be `chmod 600`), or asked for interactively. For unattended signing (no PIN prompt, no touch): `yketh touch off`, then `YKETH_PIN_FILE=~/.config/yketh/pin`. The OpenPGP defaults are `123456` / `12345678`. Change them:
 
 ```
 ykman openpgp access change-pin
