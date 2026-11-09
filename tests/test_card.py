@@ -49,6 +49,25 @@ def test_sign_digest_rejects_wrong_curve() -> None:
         fake_card(oid=OID.SECP256R1).sign_digest(b"\x00" * 32)
 
 
+def test_open_card_none_connected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_card, "list_ccid_devices", list)
+    with pytest.raises(_card.CardError, match="no YubiKey found"), _card.open_card():
+        pass
+
+
+def test_open_card_several_needs_serial(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_card, "list_ccid_devices", lambda: [object(), object()])
+    with pytest.raises(_card.CardError, match="pass --serial"), _card.open_card():
+        pass
+
+
+def test_open_card_serial_filter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_card, "list_ccid_devices", lambda: [SimpleNamespace(s=1), SimpleNamespace(s=2)])
+    monkeypatch.setattr(_card, "_serial_of", lambda d: d.s)
+    with pytest.raises(_card.CardError, match="with serial 3"), _card.open_card(3):
+        pass
+
+
 @pytest.mark.hardware
 def test_hardware_end_to_end() -> None:
     """Signs with the real card key (default PIN) without regenerating it."""

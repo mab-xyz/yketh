@@ -57,6 +57,25 @@ ykman openpgp access change-pin
 ykman openpgp access change-admin-pin
 ```
 
+## Performance
+
+Measured on a YubiKey 5C Nano (fw 5.8.0), Python 3.13, i9-10900K:
+
+| | time |
+|---|---|
+| card: one `PSO:CDS` signature + recovery id (median of 40, range 87–93 ms) | 88 ms |
+| card: connect 18 ms, verify PIN 10 ms, read public key 10 ms | ~40 ms |
+| `yketh sign-msg` (new process each call) | ~0.37 s |
+
+The signature itself is the floor, and no host code can go below it. A `yketh` call adds the interpreter and import time (~0.18 s, mostly `eth_keys`) and the card connection and PIN check.
+
+What keeps the CLI fast:
+
+- Only the smart-card interface is scanned (`list_ccid_devices`, 3 ms). `list_all_devices` also walks HID and FIDO and cost 35–170 ms. The serial is read only for `info` and `--serial`.
+- `eth_account` costs ~0.4 s to import (py_ecc BLS tables), so only `sign-tx` imports it. `sign-msg` hashes EIP-191 directly. The attestation code (`cryptography` x509) loads only for `attest` and `verify-attestation`.
+
+For repeated signing, hold one session in a long-running process: open the card once, verify the PIN once ("PIN once" is the card default), then call `Card.sign_digest` and `_eth.sign_digest` per request. That costs ~88 ms per signature instead of ~0.37 s. Do not run two `yketh` processes at the same time: the card is a single PC/SC resource, so concurrent calls fail or wait. Reproduce the numbers with `scripts/bench.py`.
+
 ## Tests
 
 ```

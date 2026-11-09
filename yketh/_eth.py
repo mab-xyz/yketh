@@ -9,14 +9,6 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from eth_account._utils.legacy_transactions import (
-    Transaction,
-    UnsignedTransaction,
-    encode_transaction,
-    serializable_unsigned_transaction_from_dict,
-)
-from eth_account.messages import defunct_hash_message
-from eth_account.typed_transactions import TypedTransaction
 from eth_keys import keys
 from eth_utils import keccak, to_checksum_address
 
@@ -62,6 +54,15 @@ def sign_digest(digest: bytes, signer: Signer, point: bytes) -> tuple[int, int, 
 
 def sign_transaction(tx: Mapping[str, Any], signer: Signer, point: bytes) -> dict[str, Any]:
     """Sign a transaction dict (typed EIP-2718 or legacy EIP-155)."""
+    # eth_account costs ~0.4 s to import (py_ecc BLS tables), so only sign-tx pays it.
+    from eth_account._utils.legacy_transactions import (
+        Transaction,
+        UnsignedTransaction,
+        encode_transaction,
+        serializable_unsigned_transaction_from_dict,
+    )
+    from eth_account.typed_transactions import TypedTransaction
+
     tx = {k: v for k, v in tx.items() if k != "from"}
     unsigned = serializable_unsigned_transaction_from_dict(tx)
     digest = bytes(unsigned.hash())
@@ -81,6 +82,7 @@ def sign_transaction(tx: Mapping[str, Any], signer: Signer, point: bytes) -> dic
 
 def sign_message(text: str, signer: Signer, point: bytes) -> str:
     """EIP-191 personal_sign; returns 65-byte r || s || v (v = 27/28) hex."""
-    digest = bytes(defunct_hash_message(text=text))
+    msg = text.encode()
+    digest = keccak(b"\x19Ethereum Signed Message:\n" + str(len(msg)).encode() + msg)
     y, r, s = sign_digest(digest, signer, point)
     return "0x" + (r.to_bytes(32, "big") + s.to_bytes(32, "big") + bytes([27 + y])).hex()

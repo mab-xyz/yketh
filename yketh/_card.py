@@ -8,11 +8,12 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import Any
 
 from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-from ykman.device import list_all_devices
+from ykman.device import list_ccid_devices, read_info
 from yubikit.core.smartcard import SmartCardConnection
 from yubikit.openpgp import INS, KEY_REF, KEY_STATUS, OID, UIF, EcAttributes, OpenPgpSession
 
@@ -117,13 +118,28 @@ class Card:
         self.session.set_uif(KEY_REF.SIG, uif)
 
 
+def _serial_of(device: Any) -> int | None:
+    with device.open_connection(SmartCardConnection) as conn:
+        return read_info(conn, device.pid).serial
+
+
 @contextmanager
-def open_card(serial: int | None = None) -> Iterator[Card]:
-    devices = [(d, i) for d, i in list_all_devices() if serial is None or i.serial == serial]
+def open_card(serial: int | None = None, *, want_serial: bool = False) -> Iterator[Card]:
+    """Open the OpenPGP applet of the one connected YubiKey (or the one with `serial`).
+
+    Only the smart-card interface is scanned (3 ms; `list_all_devices` also walks HID and
+    FIDO, 35-170 ms). The serial is read, over a separate connection since reading it
+    deselects the OpenPGP applet, only when it is asked for or needed to pick a card.
+    """
+    devices = list_ccid_devices()
+    if serial is not None:
+        devices = [d for d in devices if _serial_of(d) == serial]
     if not devices:
         raise CardError("no YubiKey found" + (f" with serial {serial}" if serial else ""))
     if len(devices) > 1:
         raise CardError("several YubiKeys connected; pass --serial")
-    device, info = devices[0]
+    device = devices[0]
+    if serial is None and want_serial:
+        serial = _serial_of(device)
     with device.open_connection(SmartCardConnection) as conn:
-        yield Card(OpenPgpSession(conn), info.serial)
+        yield Card(OpenPgpSession(conn), serial)

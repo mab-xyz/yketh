@@ -11,11 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from cryptography import x509
-from cryptography.hazmat.primitives.serialization import Encoding
-from yubikit.openpgp import UIF
-
-from . import _attest, _eth
+from . import _eth
 from ._card import CardError, open_card
 
 
@@ -37,7 +33,7 @@ def _emit(args: argparse.Namespace, data: dict[str, Any], text: str) -> None:
 
 
 def cmd_info(args: argparse.Namespace) -> None:
-    with open_card(args.serial) as card:
+    with open_card(args.serial, want_serial=True) as card:
         i = card.info()
     d = dataclasses.asdict(i)
     _emit(args, d, "\n".join(f"{k:14s} {v}" for k, v in d.items()))
@@ -80,6 +76,10 @@ def cmd_sign_msg(args: argparse.Namespace) -> None:
 
 
 def cmd_attest(args: argparse.Namespace) -> None:
+    from cryptography.hazmat.primitives.serialization import Encoding
+
+    from . import _attest
+
     with open_card(args.serial) as card:
         leaf, att = card.attest(_pin("YKETH_PIN", "PIN: "))
     pem = leaf.public_bytes(Encoding.PEM) + att.public_bytes(Encoding.PEM)
@@ -92,6 +92,10 @@ def cmd_attest(args: argparse.Namespace) -> None:
 
 
 def cmd_verify(args: argparse.Namespace) -> None:
+    from cryptography import x509
+
+    from . import _attest
+
     certs = x509.load_pem_x509_certificates(Path(args.bundle).read_bytes())
     res = _attest.verify(certs, args.address)
     d = dataclasses.asdict(res)
@@ -102,6 +106,8 @@ def cmd_verify(args: argparse.Namespace) -> None:
 
 
 def cmd_touch(args: argparse.Namespace) -> None:
+    from yubikit.openpgp import UIF
+
     uif = {"off": UIF.OFF, "on": UIF.ON, "cached": UIF.CACHED}[args.policy]
     with open_card(args.serial) as card:
         card.set_touch(_pin("YKETH_ADMIN_PIN", "Admin PIN: "), uif)
@@ -150,8 +156,14 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     try:
         args.fn(args)
-    except (CardError, _attest.AttestationError, ValueError) as e:
+    except (CardError, ValueError) as e:
         sys.exit(f"❌ {e}")
+    except Exception as e:
+        from ._attest import AttestationError  # lazy: pulls in cryptography's x509
+
+        if isinstance(e, AttestationError):
+            sys.exit(f"❌ {e}")
+        raise
 
 
 if __name__ == "__main__":
