@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,6 +12,7 @@ from eth_account import Account
 from yubikit.openpgp import OID, EcAttributes
 
 from yketh import _attest, _card, _eth
+from yketh.cli import _pin
 
 TX = json.loads((Path(__file__).parent / "tx1559.json").read_text())
 
@@ -57,7 +59,7 @@ def test_open_card_none_connected(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_open_card_several_needs_serial(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_card, "list_ccid_devices", lambda: [object(), object()])
-    with pytest.raises(_card.CardError, match="pass --serial"), _card.open_card():
+    with pytest.raises(_card.CardError, match="pass --device"), _card.open_card():
         pass
 
 
@@ -70,12 +72,15 @@ def test_open_card_serial_filter(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.hardware
 def test_hardware_end_to_end() -> None:
-    """Signs with the real card key (default PIN) without regenerating it."""
+    """Signs with the real card key without regenerating it; PIN from YKETH_PIN / YKETH_PIN_FILE."""
+    if not (os.environ.get("YKETH_PIN") or os.environ.get("YKETH_PIN_FILE")):
+        pytest.skip("set YKETH_PIN or YKETH_PIN_FILE: a wrong PIN costs one of the 3 retries")
+    pin = _pin("YKETH_PIN", "PIN: ")
     with _card.open_card() as card:
         point = card.point()
-        card.verify_pin("123456")
+        card.verify_pin(pin)
         res = _eth.sign_transaction(TX, card.sign_digest, point)
-        leaf, att = card.attest("123456")
+        leaf, att = card.attest(pin)
     addr = _eth.address_from_point(point)
     assert Account.recover_transaction(res["raw_transaction"]) == addr
     assert _attest.verify([leaf, att], addr).address == addr

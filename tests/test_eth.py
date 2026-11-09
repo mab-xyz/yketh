@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from eth_account import Account
-from eth_account.messages import encode_defunct
+from eth_account.messages import _hash_eip191_message, encode_defunct
 from eth_keys import keys
 
 from yketh import _eth
@@ -44,25 +44,80 @@ def test_normalize_s() -> None:
     assert _eth.normalize_s(n - 1) == 1
 
 
+def parts(signature: str) -> tuple[int, int, int]:
+    raw = bytes.fromhex(signature.removeprefix("0x"))
+    return int.from_bytes(raw[:32], "big"), int.from_bytes(raw[32:64], "big"), raw[64]
+
+
+def test_address_info() -> None:
+    assert _eth.address_info(POINT) == {"pubkey": "0x" + POINT[1:].hex(), "address": ADDR}
+
+
 @pytest.mark.parametrize("signer", [soft_signer, high_s_signer])
 def test_sign_1559_recovers(signer) -> None:
     res = _eth.sign_transaction(TX, signer, POINT)
     assert Account.recover_transaction(res["raw_transaction"]) == ADDR
-    assert int(res["s"], 16) <= _eth.SECP256K1_N // 2
-    assert res["raw_transaction"] == Account.sign_transaction(TX, PRIV.to_bytes()).raw_transaction.to_0x_hex()
+    assert set(res) == {"address", "digest", "signature", "raw_transaction", "tx_hash"}
+    _, s, v = parts(res["signature"])
+    assert s <= _eth.SECP256K1_N // 2 and v in (27, 28)
+    ref = Account.sign_transaction(TX, PRIV.to_bytes())
+    assert res["raw_transaction"] == ref.raw_transaction.to_0x_hex()
+    assert res["tx_hash"] == ref.hash.to_0x_hex()
 
 
 def test_sign_legacy_eip155() -> None:
     tx = {"nonce": 1, "gasPrice": 10**9, "gas": 21000, "to": TX["to"], "value": 1,
           "data": "0x", "chainId": 1}
     res = _eth.sign_transaction(tx, soft_signer, POINT)
-    assert res["v"] in (37, 38)
+    assert parts(res["signature"])[2] in (27, 28)  # the tx itself carries 37/38
     assert Account.recover_transaction(res["raw_transaction"]) == ADDR
 
 
-def test_sign_message() -> None:
-    sig = _eth.sign_message("hi", high_s_signer, POINT)
-    assert Account.recover_message(encode_defunct(text="hi"), signature=sig) == ADDR
+def test_sign_personal() -> None:
+    res = _eth.sign_personal(b"hi", high_s_signer, POINT)
+    assert set(res) == {"address", "digest", "signature"}
+    assert Account.recover_message(encode_defunct(text="hi"), signature=res["signature"]) == ADDR
+    assert res["digest"] == "0x" + bytes(_hash_eip191_message(encode_defunct(text="hi"))).hex()
+
+
+def test_sign_personal_binary_message() -> None:
+    msg = bytes(range(256))
+    res = _eth.sign_personal(msg, soft_signer, POINT)
+    assert Account.recover_message(encode_defunct(primitive=msg), signature=res["signature"]) == ADDR
+
+
+def test_sign_digest_json() -> None:
+    digest = bytes(range(32))
+    res = _eth.sign_digest_json(digest, high_s_signer, POINT)
+    assert res["digest"] == "0x" + digest.hex()
+    assert Account._recover_hash(digest, signature=bytes.fromhex(res["signature"][2:])) == ADDR
+
+
+# The Ether Mail example of EIP-712 itself: an independent reference for the digest.
+MAIL = {
+    "types": {
+        "EIP712Domain": [{"name": "name", "type": "string"}, {"name": "version", "type": "string"},
+                         {"name": "chainId", "type": "uint256"},
+                         {"name": "verifyingContract", "type": "address"}],
+        "Person": [{"name": "name", "type": "string"}, {"name": "wallet", "type": "address"}],
+        "Mail": [{"name": "from", "type": "Person"}, {"name": "to", "type": "Person"},
+                 {"name": "contents", "type": "string"}],
+    },
+    "primaryType": "Mail",
+    "domain": {"name": "Ether Mail", "version": "1", "chainId": 1,
+               "verifyingContract": "0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC"},
+    "message": {"from": {"name": "Cow", "wallet": "0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826"},
+                "to": {"name": "Bob", "wallet": "0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB"},
+                "contents": "Hello, Bob!"},
+}
+
+
+def test_typed_data_matches_eip712_reference() -> None:
+    res = _eth.sign_typed_data(MAIL, high_s_signer, POINT)
+    assert res["digest"] == "0xbe609aee343fb3c4b28e1df9e632fca64fcfaede20f02e86244efddf30957bd2"
+    assert res["encoded"].startswith("0x1901") and len(res["encoded"]) == 2 + 2 * 66
+    assert Account._recover_hash(bytes.fromhex(res["digest"][2:]),
+                                 signature=bytes.fromhex(res["signature"][2:])) == ADDR
 
 
 def test_wrong_key_detected() -> None:

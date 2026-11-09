@@ -45,6 +45,7 @@ class Attestation:
     touch_policy: str | None
     fingerprint: str | None
     chain: list[str] = field(default_factory=list)
+    kind: str = "yubico-opgp"  # hw-wallet-cli-spec: the proof's strength, Yubico PKI chain
 
 
 def _load_pems(names: tuple[str, ...]) -> list[x509.Certificate]:

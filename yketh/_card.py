@@ -137,7 +137,7 @@ def open_card(serial: int | None = None, *, want_serial: bool = False) -> Iterat
     if not devices:
         raise CardError("no YubiKey found" + (f" with serial {serial}" if serial else ""))
     if len(devices) > 1:
-        raise CardError("several YubiKeys connected; pass --serial")
+        raise CardError("several YubiKeys connected; pass --device")
     device = devices[0]
     if serial is None and want_serial:
         serial = _serial_of(device)

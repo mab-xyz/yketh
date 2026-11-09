@@ -20,17 +20,23 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov", "mypy", "ruff"]
+dev = [
+    "pytest", "pytest-cov", "mypy", "ruff",
+    "hw-wallet-cli-spec @ git+https://github.com/mab-xyz/hw-wallet-cli-spec@eda8a0029709f29889b7c4041c5abd27dd80d5ff",
+]
 
 [project.scripts]
 yketh = "yketh.cli:main"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["yketh"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["hardware: needs a YubiKey plugged in (destructive: regenerates the OpenPGP SIG key)"]
+markers = ["hardware: needs a YubiKey plugged in and its PIN in YKETH_PIN / YKETH_PIN_FILE; signs, never regenerates the key"]
 addopts = "-m 'not hardware'"
 
 [tool.mypy]

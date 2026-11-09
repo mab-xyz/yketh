@@ -145,4 +145,4 @@ def test_cli_rejects_untrusted(chain: Chain, tmp_path: Path) -> None:
     f = tmp_path / "b.pem"
     f.write_bytes(b"".join(c.public_bytes(Encoding.PEM) for c in chain.bundle))
     with pytest.raises(SystemExit, match="no trusted issuer"):
-        main(["verify-attestation", str(f)])
+        main(["verify", "--cert", str(f)])

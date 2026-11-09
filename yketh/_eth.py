@@ -1,7 +1,8 @@
 """Ethereum-side glue: addresses, low-s normalization, recovery id, transaction encoding.
 
 The card only returns raw ECDSA ``(r, s)`` over a 32-byte digest; everything that makes
-it an Ethereum signature happens here.
+it an Ethereum signature happens here. The ``sign_*`` functions return the JSON objects
+of hw-wallet-cli-spec (https://github.com/mab-xyz/hw-wallet-cli-spec).
 """
 
 from __future__ import annotations
@@ -23,6 +24,11 @@ def address_from_point(point: bytes) -> str:
     if len(point) != 65 or point[0] != 0x04:
         raise ValueError("expected a 65-byte uncompressed secp256k1 point")
     return to_checksum_address(keccak(point[1:])[-20:])
+
+
+def address_info(point: bytes) -> dict[str, str]:
+    """`address` output: the public key as X||Y (no 0x04 prefix) and its address."""
+    return {"pubkey": "0x" + point[1:].hex(), "address": address_from_point(point)}
 
 
 def normalize_s(s: int) -> int:
@@ -52,8 +58,47 @@ def sign_digest(digest: bytes, signer: Signer, point: bytes) -> tuple[int, int, 
     return recovery_id(digest, r, s, point), r, s
 
 
-def sign_transaction(tx: Mapping[str, Any], signer: Signer, point: bytes) -> dict[str, Any]:
-    """Sign a transaction dict (typed EIP-2718 or legacy EIP-155)."""
+def _signed(digest: bytes, signer: Signer, point: bytes) -> tuple[dict[str, str], int, int, int]:
+    """The `address`, `digest` and `signature` (r || s || v, v = 27/28) of every sign command."""
+    y, r, s = sign_digest(digest, signer, point)
+    sig = r.to_bytes(32, "big") + s.to_bytes(32, "big") + bytes([27 + y])
+    out = {"address": address_from_point(point), "digest": "0x" + digest.hex(), "signature": "0x" + sig.hex()}
+    return out, y, r, s
+
+
+def sign_digest_json(digest: bytes, signer: Signer, point: bytes) -> dict[str, str]:
+    return _signed(digest, signer, point)[0]
+
+
+def personal_digest(msg: bytes) -> bytes:
+    """EIP-191 version 0x45 digest."""
+    return keccak(b"\x19Ethereum Signed Message:\n" + str(len(msg)).encode() + msg)
+
+
+def sign_personal(msg: bytes, signer: Signer, point: bytes) -> dict[str, str]:
+    return _signed(personal_digest(msg), signer, point)[0]
+
+
+def typed_data_digest(typed: Mapping[str, Any]) -> tuple[bytes, bytes]:
+    """EIP-712 (digest, encoded) with encoded = 0x19 0x01 || domainSeparator || hashStruct(message)."""
+    from eth_account.messages import encode_typed_data  # heavy import: only this command pays it
+
+    signable = encode_typed_data(full_message=dict(typed))
+    encoded = b"\x19" + signable.version + signable.header + signable.body
+    return keccak(encoded), encoded
+
+
+def sign_typed_data(typed: Mapping[str, Any], signer: Signer, point: bytes) -> dict[str, str]:
+    digest, encoded = typed_data_digest(typed)
+    return _signed(digest, signer, point)[0] | {"encoded": "0x" + encoded.hex()}
+
+
+def sign_transaction(tx: Mapping[str, Any], signer: Signer, point: bytes) -> dict[str, str]:
+    """Sign a transaction dict (typed EIP-2718 or legacy EIP-155).
+
+    `signature` has v = 27/28 like the other commands; `raw_transaction` carries the
+    transaction's own v (yParity for typed transactions, EIP-155 for legacy ones).
+    """
     # eth_account costs ~0.4 s to import (py_ecc BLS tables), so only sign-tx pays it.
     from eth_account._utils.legacy_transactions import (
         Transaction,
@@ -65,8 +110,7 @@ def sign_transaction(tx: Mapping[str, Any], signer: Signer, point: bytes) -> dic
 
     tx = {k: v for k, v in tx.items() if k != "from"}
     unsigned = serializable_unsigned_transaction_from_dict(tx)
-    digest = bytes(unsigned.hash())
-    y, r, s = sign_digest(digest, signer, point)
+    out, y, r, s = _signed(bytes(unsigned.hash()), signer, point)
     if isinstance(unsigned, TypedTransaction):
         v = y
     elif isinstance(unsigned, Transaction):  # EIP-155: chain id stored in v
@@ -76,13 +120,4 @@ def sign_transaction(tx: Mapping[str, Any], signer: Signer, point: bytes) -> dic
     else:
         raise TypeError(f"unknown transaction type: {type(unsigned)}")
     raw = encode_transaction(unsigned, vrs=(v, r, s))
-    return {"raw_transaction": "0x" + raw.hex(), "hash": "0x" + keccak(raw).hex(),
-            "v": v, "r": hex(r), "s": hex(s)}
-
-
-def sign_message(text: str, signer: Signer, point: bytes) -> str:
-    """EIP-191 personal_sign; returns 65-byte r || s || v (v = 27/28) hex."""
-    msg = text.encode()
-    digest = keccak(b"\x19Ethereum Signed Message:\n" + str(len(msg)).encode() + msg)
-    y, r, s = sign_digest(digest, signer, point)
-    return "0x" + (r.to_bytes(32, "big") + s.to_bytes(32, "big") + bytes([27 + y])).hex()
+    return out | {"raw_transaction": "0x" + raw.hex(), "tx_hash": "0x" + keccak(raw).hex()}
